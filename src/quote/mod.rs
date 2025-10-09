@@ -1,6 +1,7 @@
 use crate::core::client::CacheMode;
 use crate::core::client::RetryConfig;
 use crate::core::{Quote, YfClient, YfError, quotes as core_quotes};
+use serde_json::Value;
 
 /// Fetches quotes for multiple symbols.
 ///
@@ -23,6 +24,7 @@ where
 pub struct QuotesBuilder {
     client: YfClient,
     symbols: Vec<String>,
+    fields: Vec<String>,
     cache_mode: CacheMode,
     retry_override: Option<RetryConfig>,
 }
@@ -34,6 +36,7 @@ impl QuotesBuilder {
         Self {
             client,
             symbols: Vec::new(),
+            fields: Vec::new(),
             cache_mode: CacheMode::Use,
             retry_override: None,
         }
@@ -71,6 +74,24 @@ impl QuotesBuilder {
         self
     }
 
+    /// Replaces the list of requested quote fields.
+    #[must_use]
+    pub fn fields<I, S>(mut self, fields: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.fields = fields.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Adds a single field to the requested set.
+    #[must_use]
+    pub fn add_field(mut self, field: impl Into<String>) -> Self {
+        self.fields.push(field.into());
+        self
+    }
+
     /// Fetches the quotes for the configured symbols.
     ///
     /// # Errors
@@ -85,14 +106,43 @@ impl QuotesBuilder {
         }
 
         let symbol_slices: Vec<&str> = self.symbols.iter().map(AsRef::as_ref).collect();
+        let field_slices: Option<Vec<&str>> =
+            (!self.fields.is_empty()).then(|| self.fields.iter().map(AsRef::as_ref).collect());
         let results = core_quotes::fetch_v7_quotes(
             &self.client,
             &symbol_slices,
+            field_slices.as_deref(),
             self.cache_mode,
             self.retry_override.as_ref(),
         )
         .await?;
 
         Ok(results.into_iter().map(Into::into).collect())
+    }
+
+    /// Fetches raw quote payloads for the configured symbols.
+    ///
+    /// # Errors
+    ///
+    /// Returns `YfError` if no symbols were provided or the underlying HTTP request fails.
+    pub async fn fetch_raw(self) -> Result<Vec<Value>, crate::core::YfError> {
+        if self.symbols.is_empty() {
+            return Err(crate::core::YfError::InvalidParams(
+                "symbols list cannot be empty".into(),
+            ));
+        }
+
+        let symbol_slices: Vec<&str> = self.symbols.iter().map(AsRef::as_ref).collect();
+        let field_slices: Option<Vec<&str>> =
+            (!self.fields.is_empty()).then(|| self.fields.iter().map(AsRef::as_ref).collect());
+
+        core_quotes::fetch_v7_quotes_raw(
+            &self.client,
+            &symbol_slices,
+            field_slices.as_deref(),
+            self.cache_mode,
+            self.retry_override.as_ref(),
+        )
+        .await
     }
 }

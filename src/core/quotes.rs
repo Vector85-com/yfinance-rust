@@ -1,5 +1,6 @@
 // src/core/quotes.rs
 use serde::Deserialize;
+use serde_json::Value;
 use url::Url;
 
 use crate::{
@@ -47,18 +48,18 @@ pub struct V7QuoteNode {
     pub(crate) market_state: Option<String>,
 }
 
-/// Centralized function to fetch one or more quotes from the v7 API.
-/// It handles caching, retries, and authentication (crumb).
-pub async fn fetch_v7_quotes(
+async fn fetch_v7_quote_body(
     client: &YfClient,
     symbols: &[&str],
+    fields: Option<&[&str]>,
     cache_mode: CacheMode,
     retry_override: Option<&RetryConfig>,
-) -> Result<Vec<V7QuoteNode>, YfError> {
+) -> Result<String, YfError> {
     // Inner function to attempt the fetch, allowing for an auth retry.
     async fn attempt_fetch(
         client: &YfClient,
         symbols: &[&str],
+        fields: Option<&[&str]>,
         crumb: Option<&str>,
         cache_mode: CacheMode,
         retry_override: Option<&RetryConfig>,
@@ -67,6 +68,11 @@ pub async fn fetch_v7_quotes(
         {
             let mut qp = url.query_pairs_mut();
             qp.append_pair("symbols", &symbols.join(","));
+            if let Some(list) = fields {
+                if !list.is_empty() {
+                    qp.append_pair("fields", &list.join(","));
+                }
+            }
             if let Some(c) = crumb {
                 qp.append_pair("crumb", c);
             }
@@ -103,7 +109,7 @@ pub async fn fetch_v7_quotes(
 
     // First attempt, without a crumb.
     let (body, url, maybe_status) =
-        attempt_fetch(client, symbols, None, cache_mode, retry_override).await?;
+        attempt_fetch(client, symbols, fields, None, cache_mode, retry_override).await?;
 
     let body_to_parse = if let Some(status_code) = maybe_status {
         // If unauthorized, get a crumb and retry.
@@ -114,8 +120,15 @@ pub async fn fetch_v7_quotes(
             })?;
 
             // Second attempt, with a crumb.
-            let (body, url, maybe_status) =
-                attempt_fetch(client, symbols, Some(&crumb), cache_mode, retry_override).await?;
+            let (body, url, maybe_status) = attempt_fetch(
+                client,
+                symbols,
+                fields,
+                Some(&crumb),
+                cache_mode,
+                retry_override,
+            )
+            .await?;
 
             if let Some(status_code) = maybe_status {
                 let url_s = url.to_string();
@@ -152,12 +165,46 @@ pub async fn fetch_v7_quotes(
         body
     };
 
-    let env: V7Envelope = serde_json::from_str(&body_to_parse)?;
+    Ok(body_to_parse)
+}
+
+/// Centralized function to fetch one or more quotes from the v7 API.
+/// It handles caching, retries, and authentication (crumb).
+pub async fn fetch_v7_quotes(
+    client: &YfClient,
+    symbols: &[&str],
+    fields: Option<&[&str]>,
+    cache_mode: CacheMode,
+    retry_override: Option<&RetryConfig>,
+) -> Result<Vec<V7QuoteNode>, YfError> {
+    let body = fetch_v7_quote_body(client, symbols, fields, cache_mode, retry_override).await?;
+    let env: V7Envelope = serde_json::from_str(&body)?;
 
     Ok(env
         .quote_response
         .and_then(|qr| qr.result)
         .unwrap_or_default())
+}
+
+/// Fetches raw quote nodes from the v7 API without mapping to strongly typed models.
+pub async fn fetch_v7_quotes_raw(
+    client: &YfClient,
+    symbols: &[&str],
+    fields: Option<&[&str]>,
+    cache_mode: CacheMode,
+    retry_override: Option<&RetryConfig>,
+) -> Result<Vec<Value>, YfError> {
+    let body = fetch_v7_quote_body(client, symbols, fields, cache_mode, retry_override).await?;
+    let value: Value = serde_json::from_str(&body)?;
+
+    let nodes = value
+        .get("quoteResponse")
+        .and_then(|qr| qr.get("result"))
+        .and_then(|res| res.as_array())
+        .map(|arr| arr.clone())
+        .unwrap_or_default();
+
+    Ok(nodes)
 }
 
 impl From<V7QuoteNode> for Quote {

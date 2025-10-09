@@ -429,7 +429,7 @@ async fn run_polling_stream(
             _ = ticker.tick() => {
                 if tx.is_closed() { break; }
                 let ts = chrono::Utc::now().timestamp();
-                match crate::core::quotes::fetch_v7_quotes(&client, &symbol_slices, cache_mode, retry_override).await {
+                match crate::core::quotes::fetch_v7_quotes(&client, &symbol_slices, None, cache_mode, retry_override).await {
                     Ok(quotes) => {
                         for q in quotes {
                             let lp = q.regular_market_price.or(q.regular_market_previous_close);

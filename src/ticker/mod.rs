@@ -33,6 +33,7 @@ use paft::fundamentals::analysis::{
 };
 use paft::fundamentals::statements::{BalanceSheetRow, CashflowRow, IncomeStatementRow};
 use paft::money::Currency;
+use serde_json::Value;
 
 /// A high-level interface for a single ticker symbol, providing convenient access to all available data.
 ///
@@ -135,6 +136,28 @@ impl Ticker {
         quote::fetch_quote(
             &self.client,
             &self.symbol,
+            self.cache_mode,
+            self.retry_override.as_ref(),
+        )
+        .await
+    }
+
+    /// Fetches the raw v7 quote payload, optionally restricted to a set of fields.
+    ///
+    /// # Errors
+    ///
+    /// Returns `YfError` if the network request fails or the response is missing for the symbol.
+    pub async fn quote_raw(&self, fields: &[&str]) -> Result<Value, YfError> {
+        let fields_opt = if fields.is_empty() {
+            None
+        } else {
+            Some(fields)
+        };
+
+        quote::fetch_quote_raw(
+            &self.client,
+            &self.symbol,
+            fields_opt,
             self.cache_mode,
             self.retry_override.as_ref(),
         )

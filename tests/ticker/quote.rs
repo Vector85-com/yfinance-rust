@@ -1,7 +1,9 @@
 use httpmock::Method::GET;
 use httpmock::MockServer;
+use serde_json::Value;
 use url::Url;
 use yfinance_rs::core::conversions::*;
+use yfinance_rs::quote::QuotesBuilder;
 use yfinance_rs::{Ticker, YfClient};
 
 #[tokio::test]
@@ -55,6 +57,119 @@ async fn quote_v7_happy_path() {
     );
     assert!((money_to_f64(&q.price.unwrap()) - 190.25).abs() < 1e-9);
     assert!((money_to_f64(&q.previous_close.unwrap()) - 189.50).abs() < 1e-9);
+}
+
+#[tokio::test]
+async fn quote_raw_with_custom_fields() {
+    let server = MockServer::start();
+
+    let body = r#"{
+      "quoteResponse": {
+        "result": [
+          {
+            "symbol": "AAPL",
+            "regularMarketChange": 1.23,
+            "beta": 0.87
+          }
+        ],
+        "error": null
+      }
+    }"#;
+
+    let mock = server.mock(|when, then| {
+        when.method(GET)
+            .path("/v7/finance/quote")
+            .query_param("symbols", "AAPL")
+            .query_param("fields", "regularMarketChange,beta");
+        then.status(200)
+            .header("content-type", "application/json")
+            .body(body);
+    });
+
+    let client = YfClient::builder()
+        .base_quote_v7(Url::parse(&format!("{}/v7/finance/quote", server.base_url())).unwrap())
+        .build()
+        .unwrap();
+    let ticker = Ticker::new(&client, "AAPL");
+
+    let raw = ticker
+        .quote_raw(&["regularMarketChange", "beta"])
+        .await
+        .unwrap();
+    mock.assert();
+
+    assert!(raw.is_object());
+    assert_eq!(raw.get("symbol").and_then(Value::as_str), Some("AAPL"));
+    assert!(
+        (raw.get("regularMarketChange")
+            .and_then(Value::as_f64)
+            .unwrap()
+            - 1.23)
+            .abs()
+            < 1e-9
+    );
+    assert!((raw.get("beta").and_then(Value::as_f64).unwrap() - 0.87).abs() < 1e-9);
+    assert!(raw.get("regularMarketPrice").is_none());
+}
+
+#[tokio::test]
+async fn quotes_builder_fetch_raw_with_fields() {
+    let server = MockServer::start();
+
+    let body = r#"{
+      "quoteResponse": {
+        "result": [
+          { "symbol": "AAPL", "regularMarketChange": 1.0 },
+          { "symbol": "TSLA", "regularMarketChange": -2.0 }
+        ],
+        "error": null
+      }
+    }"#;
+
+    let mock = server.mock(|when, then| {
+        when.method(GET)
+            .path("/v7/finance/quote")
+            .query_param("symbols", "AAPL,TSLA")
+            .query_param("fields", "regularMarketChange");
+        then.status(200)
+            .header("content-type", "application/json")
+            .body(body);
+    });
+
+    let client = YfClient::builder()
+        .base_quote_v7(Url::parse(&format!("{}/v7/finance/quote", server.base_url())).unwrap())
+        .build()
+        .unwrap();
+
+    let raw = QuotesBuilder::new(client)
+        .symbols(["AAPL", "TSLA"])
+        .fields(["regularMarketChange"])
+        .fetch_raw()
+        .await
+        .unwrap();
+    mock.assert();
+
+    assert_eq!(raw.len(), 2);
+    assert_eq!(raw[0].get("symbol").and_then(Value::as_str), Some("AAPL"));
+    assert!(
+        (raw[0]
+            .get("regularMarketChange")
+            .and_then(Value::as_f64)
+            .unwrap()
+            - 1.0)
+            .abs()
+            < 1e-9
+    );
+    assert_eq!(raw[1].get("symbol").and_then(Value::as_str), Some("TSLA"));
+    assert!(
+        (raw[1]
+            .get("regularMarketChange")
+            .and_then(Value::as_f64)
+            .unwrap()
+            + 2.0)
+            .abs()
+            < 1e-9
+    );
 }
 
 #[tokio::test]
