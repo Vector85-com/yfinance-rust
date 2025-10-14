@@ -13,7 +13,7 @@ fn f64_to_decimal_safely(value: f64) -> rust_decimal::Decimal {
     if !value.is_finite() {
         return rust_decimal::Decimal::ZERO;
     }
-    let formatted = format!("{value}");
+    let formatted = format!("{value:.4}");
     rust_decimal::Decimal::from_str(&formatted).unwrap_or(rust_decimal::Decimal::ZERO)
 }
 
