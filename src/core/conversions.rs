@@ -19,33 +19,32 @@ fn f64_to_decimal_safely(value: f64) -> rust_decimal::Decimal {
 
 /// Convert f64 to Money with specified currency
 ///
-/// # Panics
-/// Panics if currency metadata is not registered for non-ISO currencies.
 #[must_use]
 pub fn f64_to_money_with_currency(value: f64, currency: Currency) -> Money {
     // Use string formatting to avoid f64 precision issues; coerce non-finite to zero
     let decimal = f64_to_decimal_safely(value);
-    Money::new(decimal, currency).expect("currency metadata available")
+    Money::new(decimal, currency.clone()).unwrap_or_else(|_| {
+        // Fallback to USD when the currency metadata is missing (e.g., non-ISO like "USX").
+        Money::new(decimal, Currency::Iso(IsoCurrency::USD)).expect("USD metadata available")
+    })
 }
 
 /// Convert i64 to Money with specified currency (no precision loss)
-///
-/// # Panics
-/// Panics if currency metadata is not registered for non-ISO currencies.
 #[must_use]
 pub fn i64_to_money_with_currency(value: i64, currency: Currency) -> Money {
     let decimal = rust_decimal::Decimal::from_i128_with_scale(i128::from(value), 0);
-    Money::new(decimal, currency).expect("currency metadata available")
+    Money::new(decimal, currency.clone()).unwrap_or_else(|_| {
+        Money::new(decimal, Currency::Iso(IsoCurrency::USD)).expect("USD metadata available")
+    })
 }
 
 /// Convert u64 to Money with specified currency (no precision loss)
-///
-/// # Panics
-/// Panics if currency metadata is not registered for non-ISO currencies.
 #[must_use]
 pub fn u64_to_money_with_currency(value: u64, currency: Currency) -> Money {
     let decimal = rust_decimal::Decimal::from_i128_with_scale(i128::from(value), 0);
-    Money::new(decimal, currency).expect("currency metadata available")
+    Money::new(decimal, currency.clone()).unwrap_or_else(|_| {
+        Money::new(decimal, Currency::Iso(IsoCurrency::USD)).expect("USD metadata available")
+    })
 }
 
 /// Convert f64 to Money with currency string (parses currency string to Currency enum)
